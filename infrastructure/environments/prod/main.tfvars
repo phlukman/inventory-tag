@@ -1,0 +1,7 @@
+region    = "us-east-1"
+short_env = "prod"
+bucket_alias = "cidb-ev-logs"
+dest_bucket_arn = "arn:aws:s3:::ms-aws-logging.us-east-1.eatonvance-logs"
+dest_bucket_kms_arn = "arn:aws:kms:us-east-1:979191220410:key/823cf428-c275-4c2a-a3d0-5a57732d9cda"
+fin_billing_env = "prod"
+dest_account_num = "979191220410"
