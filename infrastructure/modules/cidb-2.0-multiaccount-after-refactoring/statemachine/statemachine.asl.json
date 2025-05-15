@@ -1,0 +1,213 @@
+{
+    "Comment": "CIDB2 Multi-Account Inventory Collection Orchestration",
+    "QueryLanguage": "JSONata",
+    "StartAt": "Initialize",
+    "States": {
+        "Initialize": {
+            "Type": "Pass",
+            "Result": {
+                "execution_id.$": "$$.Execution.Id",
+                "start_time.$": "$$.State.EnteredTime"
+            },
+            "ResultPath": "$.metadata",
+            "Next": "Parallel Collection"
+        },
+        "Parallel Collection": {
+            "Type": "Parallel",
+            "Next": "Process Results",
+            "Branches": [
+                {
+                    "StartAt": "IAM Collector",
+                    "States": {
+                        "IAM Collector": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::lambda:invoke",
+                            "OutputPath": "$.Payload",
+                            "Parameters": {
+                                "FunctionName": "${lambda_IAM}",
+                                "Payload": {
+                                    "service": "IAM",
+                                    "execution_id.$": "$.metadata.execution_id",
+                                    "accounts.$": "$.accounts",
+                                    "config.$": "$.config"
+                                }
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "Lambda.ServiceException",
+                                        "Lambda.AWSLambdaException",
+                                        "Lambda.SdkClientException",
+                                        "Lambda.TooManyRequestsException"
+                                    ],
+                                    "IntervalSeconds": 2,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                    "JitterStrategy": "FULL"
+                                },
+                                {
+                                    "ErrorEquals": ["States.TaskFailed"],
+                                    "IntervalSeconds": 30,
+                                    "MaxAttempts": 2,
+                                    "BackoffRate": 2
+                                }
+                            ],
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "KMS Collector",
+                    "States": {
+                        "KMS Collector": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::lambda:invoke",
+                            "OutputPath": "$.Payload",
+                            "Parameters": {
+                                "FunctionName": "${lambda_KMS}",
+                                "Payload": {
+                                    "service": "KMS",
+                                    "execution_id.$": "$.metadata.execution_id",
+                                    "accounts.$": "$.accounts",
+                                    "config.$": "$.config"
+                                }
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "Lambda.ServiceException",
+                                        "Lambda.AWSLambdaException",
+                                        "Lambda.SdkClientException",
+                                        "Lambda.TooManyRequestsException"
+                                    ],
+                                    "IntervalSeconds": 2,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                    "JitterStrategy": "FULL"
+                                },
+                                {
+                                    "ErrorEquals": ["States.TaskFailed"],
+                                    "IntervalSeconds": 30,
+                                    "MaxAttempts": 2,
+                                    "BackoffRate": 2
+                                }
+                            ],
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "EC2 Collector",
+                    "States": {
+                        "EC2 Collector": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::lambda:invoke",
+                            "OutputPath": "$.Payload",
+                            "Parameters": {
+                                "FunctionName": "${lambda_EC2}",
+                                "Payload": {
+                                    "service": "EC2",
+                                    "execution_id.$": "$.metadata.execution_id",
+                                    "accounts.$": "$.accounts",
+                                    "config.$": "$.config"
+                                }
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "Lambda.ServiceException",
+                                        "Lambda.AWSLambdaException",
+                                        "Lambda.SdkClientException",
+                                        "Lambda.TooManyRequestsException"
+                                    ],
+                                    "IntervalSeconds": 2,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                    "JitterStrategy": "FULL"
+                                },
+                                {
+                                    "ErrorEquals": ["States.TaskFailed"],
+                                    "IntervalSeconds": 30,
+                                    "MaxAttempts": 2,
+                                    "BackoffRate": 2
+                                }
+                            ],
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "S3 Collector",
+                    "States": {
+                        "S3 Collector": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::lambda:invoke",
+                            "OutputPath": "$.Payload",
+                            "Parameters": {
+                                "FunctionName": "${lambda_S3}",
+                                "Payload": {
+                                    "service": "S3",
+                                    "execution_id.$": "$.metadata.execution_id",
+                                    "accounts.$": "$.accounts",
+                                    "config.$": "$.config"
+                                }
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "Lambda.ServiceException",
+                                        "Lambda.AWSLambdaException",
+                                        "Lambda.SdkClientException",
+                                        "Lambda.TooManyRequestsException"
+                                    ],
+                                    "IntervalSeconds": 2,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                    "JitterStrategy": "FULL"
+                                },
+                                {
+                                    "ErrorEquals": ["States.TaskFailed"],
+                                    "IntervalSeconds": 30,
+                                    "MaxAttempts": 2,
+                                    "BackoffRate": 2
+                                }
+                            ],
+                            "End": true
+                        }
+                    }
+                }
+            ],
+            "ResultPath": "$.collection_results"
+        },
+        "Process Results": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "OutputPath": "$.Payload",
+            "Parameters": {
+                "FunctionName": "${lambda_results_processor}",
+                "Payload": {
+                    "execution_id.$": "$.metadata.execution_id",
+                    "results.$": "$.collection_results",
+                    "run_summary.$": "$.run_summary"
+                }
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException",
+                        "Lambda.TooManyRequestsException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2
+                }
+            ],
+            "Next": "Success"
+        },
+        "Success": {
+            "Type": "Succeed"
+        }
+    }
+}
