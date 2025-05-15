@@ -1,0 +1,11 @@
+{
+  "accountId": "string",
+  "arn": "string",
+  "availabilityZone": "string",
+  "awsRegion": "string",
+  "configuration.ARN": "string",
+  "tags.key": "string",
+  "tags.tag": "string",
+  "tags.value": "string",
+  "version": "string"
+}
