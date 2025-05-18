@@ -11,11 +11,11 @@ import boto3
 from botocore.exceptions import ClientError
 from botocore.config import Config
 from circuit_breaker import CircuitBreaker, CircuitBreakerDecorator
-#from logs import logger
-import math
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+from logs import logger
+
+
+logger = logging.getLogger(__name__)
+
 # Common AWS error codes and their meanings
 COMMON_AWS_ERRORS = {
     'AccessDenied': 'Insufficient permissions',
@@ -209,9 +209,7 @@ class SnsPublisher:
         successful_count = 0
         failed_count = 0
         results = []
-        # DEBUG INIT
-        dc =0
-        # DEBUG END
+
         # Process each message sequentially
         for index, message in enumerate(messages):
             try:
@@ -224,7 +222,6 @@ class SnsPublisher:
                         if isinstance(value, str):
                             message_attributes[key] = {
                                 "DataType": "String", "StringValue": value}
-                        # TODO: Remove, no datatype binary provided
                         elif isinstance(value, bytes):
                             message_attributes[key] = {
                                 "DataType": "Binary", "BinaryValue": value}
@@ -239,13 +236,6 @@ class SnsPublisher:
                     actual_message = json.dumps(actual_message)
 
                 # Publish the message
-                # DEBUG INIT
-            
-                if dc == 0:
-                    logger.info(f"debug: Batch  message: {actual_message}, Attributes: {message_attributes}")
-                    dc = 1
-                # DEBUG END
-                logger.info()
                 response = topic.publish(
                     Message=actual_message, MessageAttributes=message_attributes)
                 message_id = response.get("MessageId")
@@ -285,172 +275,6 @@ class SnsPublisher:
         logger.info("Completed sending to SNS. Success: %d/%d, Failed: %d/%d",
                     successful_count, total_messages, failed_count, total_messages)
 
-        return summary
-
-    def publish_in_batches(self, topic_arn, policies, batch_size=10, common_attributes=None):
-        """
-        Implements batching for SNS message publishing to improve performance and avoid throttling
-        
-        Args:
-            topic_arn (str): The ARN of the SNS topic to publish to
-            policies (list): List of policies or messages to publish
-            batch_size (int, optional): Size of each batch (default: 10)
-            common_attributes (dict, optional): Common message attributes for all messages
-            
-        Returns:
-            dict: Summary of the batch publishing operation
-        """
-        if not policies:
-            logger.warning("Empty policies list provided, nothing to send")
-            return {
-                'status': 'completed',
-                'total_messages': 0,
-                'successful': 0,
-                'failed': 0,
-                'batches': 0,
-                'results': []
-            }
-            
-        total_messages = len(policies)
-        total_batches = math.ceil(total_messages / batch_size)
-        
-        logger.info("Publishing %d messages to SNS topic %s in %d batches (batch size: %d)",
-                   total_messages, topic_arn, total_batches, batch_size)
-        
-        # Initialize counters and results
-        successful_count = 0
-        failed_count = 0
-        results = []
-        
-        # Process messages in batches
-        for batch_index in range(total_batches):
-            batch_start = batch_index * batch_size
-            batch_end = min((batch_index + 1) * batch_size, total_messages)
-            current_batch = policies[batch_start:batch_end]
-            batch_size_actual = len(current_batch)
-            
-            logger.info("Processing batch %d/%d with %d messages", 
-                       batch_index + 1, total_batches, batch_size_actual)
-            
-            # Prepare messages for this batch
-            messages = [
-                {"message": {"id": batch_start + i + 1, "data": policy}} 
-                for i, policy in enumerate(current_batch)
-            ]
-            
-            # Get the topic
-            topic = self.sns_resource.Topic(topic_arn)
-            
-            batch_start_time = time.time()
-            batch_successful = 0
-            batch_failed = 0
-            # DEBUG INIT
-            dc = 0
-            # DEBUG END
-            # Process each message in the batch
-            for msg_index, message in enumerate(messages):
-                absolute_index = batch_start + msg_index
-                try:
-                    # Extract message attributes
-                    message_attributes = common_attributes.copy() if common_attributes else {}
-                    
-                    if isinstance(message, dict) and 'attributes' in message:
-                        # Format attributes
-                        for key, value in message['attributes'].items():
-                            if isinstance(value, str):
-                                message_attributes[key] = {
-                                    "DataType": "String", "StringValue": value}
-                            elif isinstance(value, bytes):
-                                message_attributes[key] = {
-                                    "DataType": "Binary", "BinaryValue": value}
-                        
-                        # Use the actual message content
-                        actual_message = message.get('message', message)
-                    else:
-                        actual_message = message
-                    
-                    # Convert message to string if it's a dict
-                    if isinstance(actual_message, dict):
-                        actual_message = json.dumps(actual_message)
-                    # DEBUG INIT
-                    if dc == 0:
-                        logger.info(f"debug: Batch  message: {actual_message}, Attributes: {message_attributes}")
-                    dc = 1
-                    # DEBUG END
-                    # Publish the message
-                    response = topic.publish(
-                        Message=actual_message, 
-                        MessageAttributes=message_attributes
-                    )
-                    message_id = response.get("MessageId")
-                    
-                    # Record success
-                    successful_count += 1
-                    batch_successful += 1
-                    results.append({
-                        'batch': batch_index + 1,
-                        'index': absolute_index,
-                        'status': 'success',
-                        'MessageId': message_id
-                    })
-                    
-                except ClientError as ce:
-                    # Handle AWS service errors
-                    error_code = ce.response.get('Error', {}).get('Code', 'Unknown')
-                    
-                    failed_count += 1
-                    batch_failed += 1
-                    results.append({
-                        'batch': batch_index + 1,
-                        'index': absolute_index,
-                        'status': 'failed',
-                        'error_code': error_code,
-                        'error': str(ce)
-                    })
-                    
-                    logger.error("Failed to publish message %d (AWS error: %s): %s",
-                                absolute_index, error_code, str(ce))
-                    
-                except Exception as e:
-                    # Handle general errors
-                    failed_count += 1
-                    batch_failed += 1
-                    results.append({
-                        'batch': batch_index + 1,
-                        'index': absolute_index,
-                        'status': 'failed',
-                        'error': str(e)
-                    })
-                    
-                    logger.error("Failed to publish message %d: %s",
-                                absolute_index, str(e))
-            
-            # Log batch results
-            batch_duration = time.time() - batch_start_time
-            logger.info("Batch %d/%d completed in %.2fs - Success: %d/%d, Failed: %d/%d",
-                       batch_index + 1, total_batches, batch_duration, 
-                       batch_successful, batch_size_actual, 
-                       batch_failed, batch_size_actual)
-            
-            # Add a small delay between batches to prevent throttling (if not the last batch)
-            if batch_index < total_batches - 1:
-                time.sleep(0.2)  # 200ms delay between batches
-        
-        # Prepare summary
-        summary = {
-            'status': 'completed',
-            'total_messages': total_messages,
-            'successful': successful_count,
-            'failed': failed_count,
-            'batches': total_batches,
-            'results': results
-        }
-        
-        logger.info("SNS batch publishing complete - Success: %d/%d, Failed: %d/%d, Batches: %d",
-                   successful_count, total_messages, 
-                   failed_count, total_messages, 
-                   total_batches)
-        
         return summary
 
 

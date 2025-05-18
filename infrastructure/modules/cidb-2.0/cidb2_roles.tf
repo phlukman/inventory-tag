@@ -205,7 +205,8 @@ resource "aws_iam_role_policy" "ami_lambda_exec_role_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"],
+        # Added s3:DeleteObject permission for S3 locking mechanism
+        Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:DeleteObject"],
         Effect   = "Allow",
         Resource = [var.s3_bucket_arn, "${var.s3_bucket_arn}/*"]
       },

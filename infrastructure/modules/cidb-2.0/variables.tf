@@ -54,3 +54,8 @@ variable "cidb_app_source_bucket_key_arn" {
   description = "S3 encryption key"
   type = string
 }
+
+variable "s3_bucket_name" {
+  description = "S3 bucket name where the CIDB data will be stored"
+  type        = string
+}
