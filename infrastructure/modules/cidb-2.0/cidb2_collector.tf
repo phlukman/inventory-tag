@@ -44,35 +44,6 @@ resource "aws_sqs_queue" "dlq" {
 
 }
 
-# resource "aws_sqs_queue_policy" "cidb2_queue_policy" {
-#   policy = jsonencode(
-#     {
-
-#       Version = "2012-10-17"
-#       Statement = [
-#         {
-          
-#           Action    = [
-#             "SQS:SendMessage",
-#             "SQS:ReceiveMessage"
-#           ]
-#            Condition = {
-#             "ArnEquals" = {
-#               "aws:SourceArn" = module.cidb2_inventory_sns_topic.sns_topic.arn
-#             }
-#             }
-#           Effect    = "Allow"
-#           Principal = {
-#             Service = "sns.amazonaws.com"
-#           }
-#           Resource  = module.cidb2_sqs_queue.arn
-#         }
-#       ]
-#     }
-#   )
-#   queue_url = module.cidb2_sqs_queue.id
-# }
-
 #-----------------------------------------------------------------------#
 # Lambda Producer functions                                            #
 #-----------------------------------------------------------------------#
@@ -86,8 +57,9 @@ module "lambda_collector" {
   handler       = "main.lambda_handler"
   runtime       = "python3.10"
   publish       = true
-  timeout       = "300"
-  memory_size   = "512"
+  # PERFORMANCE IMPROVEMENT: Increased timeout and memory for processing large volumes
+  timeout       = "900"   # Increased from 300 to 900 seconds (15 minutes)
+  memory_size   = "1024"  # Increased from 512MB to 1024MB
   source_path   = "${path.module}/src/cidb2_producer"
   create_role   = false
   lambda_role   =  aws_iam_role.ev_ms_cidb2_inventory_role.arn
@@ -97,7 +69,6 @@ module "lambda_collector" {
     MEMBER_ACCOUNTS = jsonencode(var.member_accounts_ids)
     SNS_TOPIC_ARN   = module.cidb2_inventory_sns_topic.sns_topic.arn
   }
-
 }
 
 
@@ -110,26 +81,8 @@ module "cidb2_inventory_sns_topic" {
   sns_topic_name  = "${var.short_env}-cidb2-lambda-collector-sns-topic"
   sns_policy_json = data.aws_iam_policy_document.cidb2_sns_policy_json.json
   sns_kms_key_arn = var.sns_kms_key_arn
-
 }
 
-data "aws_iam_policy_document" "lambda_sns_publish_policy_doc" {
-  statement {
-    effect = "Allow"
-
-    actions = [
-      "sns:Publish"
-    ]
-
-    resources = [
-      module.cidb2_inventory_sns_topic.sns_topic.arn
-    ]
-    principals {
-      type        = "service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-  }
-}
 #--------------------------------------------------------------#
 # SNS Topic Subscription to SQS                                #
 #--------------------------------------------------------------# 

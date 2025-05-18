@@ -6,9 +6,7 @@ import boto3
 from cidb2_producer import ClientSession, CIDBBase, IAMClient, SnsPublisher, CIDBConfig
 from logs import logger
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
 
 ARN_TOPIC = env.get('SNS_TOPIC_ARN')
 SNS_NOTIFY_ARN = env.get('SNS_NOTIFY_URL')
@@ -150,23 +148,17 @@ def process_services(message):
                             logger.debug("Tags: None")
                     # Option to save results to JSON file
                     # Send to SQS queue
-                    # PERFORMANCE IMPROVEMENT: Use batch processing for SNS messages
-                    # Configurable batch size - Adjust based on environment and load
-                    batch_size = 10  # Default batch size
-                    
-                    # For large policy sets, use larger batches
-                    if len(policies) > 100:
-                        batch_size = 20
-                    
-                    # Call the new batching method instead of publishing messages individually
-                    logger.info("Sending %d policies to SNS topic using batched publishing with batch size %d", 
-                                len(policies), batch_size)
-                    
-                    result = sns_publish_data.publish_in_batches(
-                        topic_arn=ARN_TOPIC,
-                        policies=policies,
-                        batch_size=batch_size,
+                    messages = [
+                        {"message": {"id": i+1, "data": policy},
+                            #"attributes": {{"Service": FUNCTION_NAME}}
+                            }
+                        for i, policy in enumerate(policies)
+                    ]
+                    result = sns_publish_data.publish_batch_sns_message(
+                        topic_arn= ARN_TOPIC,
+                        messages= messages,
                         common_attributes=common_attributes
+                        #common_attributes=None
                     )
                 # Check results
                 logger.info("Status: %s", result['status'])
