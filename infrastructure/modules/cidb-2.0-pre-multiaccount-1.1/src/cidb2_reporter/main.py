@@ -555,6 +555,193 @@ def read_csv_from_s3(config_client, bucket_name, object_key):
                 "rows": []
             }
 
+def append_to_csv(config_client, new_rows, bucket_name, object_key, request_id=None):
+    """
+    Append new rows to an existing CSV file in S3 without reading the entire file first.
+    Uses S3 versioning to ensure each append operation creates a new version.
+    
+    Args:
+        config_client: Boto3 S3 client
+        new_rows: List of dictionaries representing new CSV rows to append
+        bucket_name: S3 bucket name
+        object_key: S3 object key
+        request_id: Unique ID for the current request for tracing
+        
+    Returns:
+        dict: Append operation result with version_id
+    """
+    if not new_rows:
+        log_event("warning", "No rows to append to S3", 
+                  request_id=request_id,
+                  bucket=bucket_name, 
+                  object_key=object_key)
+        return {
+            "status": "warning",
+            "bucket": bucket_name,
+            "key": object_key,
+            "message": "No rows to append"
+        }
+    
+    log_event("info", "Appending rows to S3", 
+              request_id=request_id,
+              bucket=bucket_name, 
+              object_key=object_key, 
+              row_count=len(new_rows))
+    
+    try:
+        # Create CSV for just the new rows
+        start_time = time.time()
+        csv_buffer = io.StringIO()
+        
+        # Get fieldnames from the first row
+        fieldnames = new_rows[0].keys()
+        if not fieldnames:
+            fieldnames = ['Type', 'Arn', 'Tags', 'AWSConfig']
+            log_event("warning", "No fieldnames found in rows, using default", 
+                      request_id=request_id,
+                      bucket=bucket_name, 
+                      object_key=object_key, 
+                      default_fieldnames=fieldnames)
+        
+        writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
+        
+        # Check if file already exists
+        file_exists = True
+        try:
+            config_client.head_object(Bucket=bucket_name, Key=object_key)
+        except config_client.exceptions.ClientError as e:
+            # If file doesn't exist, include headers
+            if e.response['Error']['Code'] == '404':
+                file_exists = False
+            else:
+                # For other errors, re-raise
+                raise
+        
+        # For new files, include header and write all rows
+        if not file_exists:
+            log_event("info", "File doesn't exist, creating new file with headers", 
+                      request_id=request_id,
+                      bucket=bucket_name, 
+                      object_key=object_key)
+            writer.writeheader()
+            writer.writerows(new_rows)
+            
+            # For new files, simply upload the content
+            upload_start_time = time.time()
+            upload_response = config_client.put_object(
+                Bucket=bucket_name,
+                Key=object_key,
+                Body=csv_buffer.getvalue(),
+                ContentType='text/csv'
+            )
+        else:
+            # For existing files, we need to append to the existing content
+            upload_start_time = time.time()
+            
+            try:
+                # Get the existing content
+                response = config_client.get_object(Bucket=bucket_name, Key=object_key)
+                existing_content = response['Body'].read().decode('utf-8')
+                
+                # Check if the file has content
+                if existing_content.strip():
+                    # Parse the existing content to get headers
+                    existing_buffer = io.StringIO(existing_content)
+                    reader = csv.reader(existing_buffer)
+                    headers = next(reader)  # Get the header row
+                    
+                    # Prepare the new rows in CSV format without headers
+                    new_rows_buffer = io.StringIO()
+                    writer = csv.DictWriter(new_rows_buffer, fieldnames=fieldnames)
+                    writer.writerows(new_rows)
+                    
+                    # Get just the data rows (skip the header) from the new content
+                    new_rows_content = new_rows_buffer.getvalue()
+                    if '\n' in new_rows_content:
+                        new_rows_data = new_rows_content.split('\n', 1)[1]
+                    else:
+                        new_rows_data = ""
+                    
+                    # Combine existing content with new rows
+                    combined_content = existing_content
+                    if combined_content and not combined_content.endswith('\n'):
+                        combined_content += '\n'
+                    combined_content += new_rows_data
+                    
+                    # Upload the combined content
+                    upload_response = config_client.put_object(
+                        Bucket=bucket_name,
+                        Key=object_key,
+                        Body=combined_content,
+                        ContentType='text/csv'
+                    )
+                else:
+                    # File exists but is empty, treat as a new file
+                    writer.writeheader()
+                    writer.writerows(new_rows)
+                    upload_response = config_client.put_object(
+                        Bucket=bucket_name,
+                        Key=object_key,
+                        Body=csv_buffer.getvalue(),
+                        ContentType='text/csv'
+                    )
+            except Exception as e:
+                log_event("error", "Error appending to existing file, creating new file", 
+                          request_id=request_id,
+                          bucket=bucket_name, 
+                          object_key=object_key,
+                          error=str(e))
+                
+                # If there's an error, just create a new file
+                writer.writeheader()
+                writer.writerows(new_rows)
+                upload_response = config_client.put_object(
+                    Bucket=bucket_name,
+                    Key=object_key,
+                    Body=csv_buffer.getvalue(),
+                    ContentType='text/csv'
+                )
+        
+        upload_time = time.time() - upload_start_time
+        total_time = time.time() - start_time
+        
+        # Get the version ID from the response
+        version_id = upload_response.get('VersionId', 'None')
+        
+        log_event("info", "Successfully appended rows to S3", 
+                  request_id=request_id,
+                  bucket=bucket_name, 
+                  object_key=object_key, 
+                  row_count=len(new_rows),
+                  version_id=version_id,
+                  file_existed=file_exists,
+                  csv_prep_time_seconds=round(csv_prep_time, 3) if 'csv_prep_time' in locals() else 0,
+                  upload_time_seconds=round(upload_time, 3),
+                  total_time_seconds=round(total_time, 3))
+                  
+        return {
+            "status": "success",
+            "bucket": bucket_name,
+            "key": object_key,
+            "version_id": version_id,
+            "rows": len(new_rows)
+        }
+            
+    except Exception as e:
+        log_event("error", "Error appending to S3", 
+                  request_id=request_id,
+                  bucket=bucket_name, 
+                  object_key=object_key, 
+                  error=str(e),
+                  traceback=traceback.format_exc())
+                  
+        return {
+            "status": "error",
+            "message": str(e),
+            "bucket": bucket_name,
+            "key": object_key
+        }
+
 def write_csv_to_s3(config_client, rows, bucket_name, object_key, request_id=None):
     """
     Write CSV rows to S3 using versioning instead of locking
@@ -866,28 +1053,13 @@ def lambda_handler(event, context):
                               service=service_name,
                               object_key=service_object_key)
                     
-                    # Read existing CSV data for this service
-                    #current_service_data = read_csv_from_s3(s3, BUCKET_NAME, service_object_key, request_id=request_id)
-                    current_service_data = read_csv_from_s3(s3, BUCKET_NAME, service_object_key)
-                    
-                    if current_service_data["status"] == "success":
-                        # Combine existing and new rows
-                        existing_rows = len(current_service_data['rows'])
-                        log_event("info", "Appending new rows to existing service CSV data", 
-                                  request_id=request_id,
-                                  service=service_name,
-                                  existing_row_count=existing_rows,
-                                  new_row_count=len(service_rows))
-                                  
-                        service_rows.extend(current_service_data['rows'])
-                    
-                    # Write service rows to S3
+                    # Instead of reading then writing, directly append new rows
                     s3_write_start = time.time()
-                    write_result = write_csv_to_s3(s3, service_rows, BUCKET_NAME, service_object_key, request_id=request_id)
+                    write_result = append_to_csv(s3, service_rows, BUCKET_NAME, service_object_key, request_id=request_id)
                     service_write_time = round((time.time() - s3_write_start) * 1000, 2)
                     
                     if write_result["status"] != "success":
-                        s3_write_failures.append(service_name)
+                        metrics["failed_writes"] += 1
                         if service_name not in failed_message_ids:
                             failed_message_ids.append(service_name)
                     
@@ -895,10 +1067,9 @@ def lambda_handler(event, context):
                               request_id=request_id,
                               service=service_name,
                               status=write_result["status"],
-                              row_count=len(service_rows),
                               write_time_ms=service_write_time)
                 except Exception as e:
-                    s3_write_failures.append(service_name)
+                    metrics["failed_writes"] += 1
                     if service_name not in failed_message_ids:
                         failed_message_ids.append(service_name)
                     
