@@ -1,0 +1,32 @@
+data "aws_iam_policy_document" "ev_ssm_session_manager_IP_policy" {
+  version = "2012-10-17"
+  statement {
+    effect = "Allow"
+    actions = [
+      "ssm:UpdateInstanceInformation",
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel"
+    ]
+    resources = ["*"]
+  }
+  statement {
+    effect = "Allow"
+    actions = ["s3:GetEncryptionConfiguration"
+    ]
+    resources = ["*"]
+  }
+  statement {
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = ["arn:aws:kms:us-east-1:*:alias/aws/ssm"]
+  }
+}
+
+resource "aws_iam_policy" "ev_ssm_session_manager_IP_policy" {
+  name        = "EVSSMSessionManagerIPPolicy"
+  path        = local.path
+  description = "Restricted SSM access to execute actions from Shared Services account."
+  policy      = data.aws_iam_policy_document.ev_ssm_session_manager_IP_policy.json
+}
