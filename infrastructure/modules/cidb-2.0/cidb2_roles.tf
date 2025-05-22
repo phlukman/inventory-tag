@@ -91,7 +91,8 @@ data "aws_iam_policy_document" "step_function_invoke_lambda_policy_document" {
 
     resources = [
       module.lambda_collector["IAM"].lambda_function_arn,
-      module.lambda_collector["KMS"].lambda_function_arn
+      module.lambda_collector["KMS"].lambda_function_arn,
+      module.lambda_merge.lambda_function_arn
     ]
   }
 }
