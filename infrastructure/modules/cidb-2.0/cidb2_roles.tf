@@ -27,7 +27,7 @@ data "aws_iam_policy_document" "step_function_assume_role_policy" {
 resource "aws_iam_policy" "state_machine_log_delivery_policy" {
   name        = "${var.short_env}-cidb2-state-machine-log-delivery-policy"
   description = "Policy to allow Step Function to write logs to CloudWatch"
-  policy = <<EOF
+  policy      = <<EOF
 {
   "Version" : "2012-10-17",
   "Statement" : [
@@ -134,11 +134,11 @@ data "aws_iam_policy_document" "eventbridge_policy" {
   statement {
     actions = ["sts:AssumeRole"]
     principals {
-      type        = "Service"
+      type = "Service"
       identifiers = [
         "events.amazonaws.com",
         "scheduler.amazonaws.com"
-        ]
+      ]
     }
   }
 }
@@ -206,7 +206,7 @@ resource "aws_iam_role_policy" "ami_lambda_exec_role_policy" {
     Statement = [
       {
         # Added s3:DeleteObject permission for S3 locking mechanism
-        Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:DeleteObject"],
+        Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:DeleteObject", "s3:ListBucketVersions", "s3:GetObjectVersion"],
         Effect   = "Allow",
         Resource = [var.s3_bucket_arn, "${var.s3_bucket_arn}/*"]
       },
@@ -228,20 +228,20 @@ resource "aws_iam_role_policy" "ami_lambda_exec_role_policy" {
         ]
       },
       {
-        
+
         Action = [
           "sqs:ReceiveMessage",
           "sqs:DeleteMessage",
           "sqs:GetQueueAttributes"
         ],
-        Effect = "Allow",
-        Resource = [ module.cidb2_sqs_queue.arn]
+        Effect   = "Allow",
+        Resource = [module.cidb2_sqs_queue.arn]
       },
       {
-        Action   = [
+        Action = [
           "sns:Publish"
         ],
-        Effect   = "Allow",
+        Effect = "Allow",
         Resource = [
           var.sns_topic_arn,
           module.cidb2_inventory_sns_topic.sns_topic.arn
@@ -306,9 +306,9 @@ data "aws_iam_policy_document" "cidb2_sns_policy_json" {
 #---------------------------------------------------------------------
 # Allow IAM Lambda to assume target account roles
 #---------------------------------------------------------------------
-data aws_iam_policy_document "allow_lambda_remote_account_access"{
+data "aws_iam_policy_document" "allow_lambda_remote_account_access" {
   statement {
-    effect = "Allow"
+    effect  = "Allow"
     actions = ["sts:AssumeRole"]
     resources = [
       "arn:aws:iam::053210025230:role/cidb-inventory-role"

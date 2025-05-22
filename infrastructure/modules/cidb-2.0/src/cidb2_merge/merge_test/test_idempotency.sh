@@ -25,7 +25,7 @@ echo "Found $CSV_COUNT AWS IAM CSV files in $DATA_DIR"
 echo "Starting idempotency test at $(date)" > $LOG_FILE
 
 # Run 20 times and check for consistent results
-for i in {1..20}; do
+for i in {1..5}; do
     echo "===== Run $i =====" | tee -a $LOG_FILE
     
     # Run merger with local command

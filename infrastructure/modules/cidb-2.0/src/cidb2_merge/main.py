@@ -9,7 +9,10 @@ import boto3
 from datetime import datetime
 import re
 from botocore.exceptions import ClientError
-from s3_utils import create_s3_client, list_s3_file_versions, merge_csv_files_from_s3
+from s3_utils import create_s3_client, list_s3_file_versions, merge_csv_files_from_s3, save_csv_file_versions_to_files, save_csv_file_to_s3
+from csv_merger import merge_csv_files_from_s3_v1, merge_csv_files_from_directory
+
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,9 +22,10 @@ logger.setLevel(logging.INFO)
 
 SQS_URL = env.get("SQS_URL", "https://sqs.us-east-1.amazonaws.com/477591219415/dev-cidb2-sqs-queue")
 REGION = env.get("LAMBDA_REGION", "us-east-1")
-INITIAL_DELAY = env.get("INITIAL_DELAY",1)
-MAX_RETRIES = env.get("MAX_RETRIES", 3)
+INITIAL_DELAY = int(env.get("INITIAL_DELAY",1))
+MAX_RETRIES = int(env.get("MAX_RETRIES", 3))
 BUCKET_NAME = env.get("BUCKET_NAME", "evsharesvcnonprod-us-east-1-priv-cidb-ev-logs")
+TIME_FRAME = int(env.get("TIME_FRAME", 0))  # Timeframe in minutes
 
 service_name = "AWS::IAM::Policy"
 today = datetime.today()
@@ -54,7 +58,12 @@ object_key=f"{get_service_object_key(service_name)}"
 OBJECT_KEY=f"{object_key}.csv"
 OBJECT_KEY_MERGED=f"{object_key}-merged.csv"
 
-
+def out_put_name(timeframe):
+    windows_minutes = timeframe
+    now = datetime.datetime.now()
+    rounded_minutes = (now.minute // windows_minutes) * windows_minutes
+    adjusted_time = now.replace(minute = rounded_minutes, second=0)
+    return adjusted_time
 
 def retry(max_retries = 3, initial_delay = 1):
     def decorator(func):
@@ -129,6 +138,7 @@ def write_csv_buffer_to_s3(config_client,csv_buffer,bucket_name, object_key):
         error_message = e.response['Error']['Message']
         logger.error(f"S3 error: {error_code} - {error_message}")
 
+
 def lambda_handler(event, context):
     try:
 
@@ -139,8 +149,30 @@ def lambda_handler(event, context):
 
             versions = list_s3_file_versions(BUCKET_NAME, object_key=OBJECT_KEY, region="us-east-1")
             #logger.info("Found %s versions of %s file to merge", versions, OBJECT_KEY)
-            merged_csv_data = merge_csv_files_from_s3(BUCKET_NAME, OBJECT_KEY, region="us-east-1")
-            write_csv_buffer_to_s3(s3_client, merged_csv_data, BUCKET_NAME, OBJECT_KEY_MERGED)
+            #merged_csv_data = merge_csv_files_from_s3(BUCKET_NAME, OBJECT_KEY, region="us-east-1")
+            ##write_csv_buffer_to_s3(s3_client, merged_csv_data, BUCKET_NAME, OBJECT_KEY_MERGED)
+            # Test merge method
+            
+            status_versions= save_csv_file_versions_to_files(BUCKET_NAME, object_key = OBJECT_KEY, output_dir= "/tmp", region="us-east-1")
+            if not status_versions:
+                logger.error("Failed to save file S3 Versions")
+                return
+
+            status_merge = merge_csv_files_from_directory(directory_path="/tmp", output_filename="/tmp/output.csv")
+            if not status_merge:
+                logger.error("Failed to merge files")
+                return
+
+            status_save = save_csv_file_to_s3(bucket_name=BUCKET_NAME, object_key=OBJECT_KEY_MERGED, file_name="/tmp/output.csv", region="us-east-1")
+            if not status_save:
+                logger.error("Failed to save merged file to S3")
+                return
+
+            logger.info("CSV files processed and merged successfully.")
+
+            #srv_name = re.sub(r':+', '_',service_name)
+            #srv_csv_file = f"cidb2_reporter/cidb-2.0/{year}/{month}/"
+            #merge_csv_files_from_s3_v1(BUCKET_NAME, srv_csv_file)
     except Exception as e:
         logging.error(e)
         raise e

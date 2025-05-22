@@ -16,9 +16,9 @@ resource "aws_sfn_state_machine" "cidb2_step_functions" {
   name     = "${var.short_env}-cidb2-step-function"
   role_arn = aws_iam_role.step_function_role.arn
   definition = templatefile("${path.module}/statemachine/statemachine.asl.json", {
-     
-    lambda_IAM = module.lambda_collector["IAM"].lambda_function_arn
-    lambda_KMS = module.lambda_collector["KMS"].lambda_function_arn
+    lambda_merge = module.lambda_merge.lambda_function_arn
+    lambda_IAM   = module.lambda_collector["IAM"].lambda_function_arn
+    lambda_KMS   = module.lambda_collector["KMS"].lambda_function_arn
   })
   logging_configuration {
     level           = "ALL"

@@ -21,3 +21,6 @@
 # engineer_role_arn             = local.account_alias == "evsharesvcnonprod" ? "arn:aws:iam::477591219415:role/Engineer" : local.account_alias == "evsharesvcprod" ? "arn:aws:iam::435574127453:role/Engineer" : ""
 
 # }
+locals {
+    trigger_windows_time = 15
+}

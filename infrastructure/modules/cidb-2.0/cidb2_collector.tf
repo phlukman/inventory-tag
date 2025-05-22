@@ -13,25 +13,24 @@ module "cidb2_sqs_queue" {
 
   iam_policy_statements = [
     {
-
-      Version = "2012-10-17"
-      Statement = [
+      sid    = "AllowSendMessage"
+      effect = "Allow"
+      actions = [
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage"
+      ]
+      resources = [module.cidb2_sqs_queue.arn]
+      principals = [
         {
-          
-          Action    = [
-            "SQS:SendMessage",
-            "SQS:ReceiveMessage"
-          ]
-           Condition = {
-            "ArnEquals" = {
-              "aws:SourceArn" = module.cidb2_inventory_sns_topic.sns_topic.arn
-            }
-            }
-          Effect    = "Allow"
-          Principal = {
-            Service = "sns.amazonaws.com"
-          }
-          Resource  = module.cidb2_sqs_queue.arn
+          type        = "Service"
+          identifiers = ["sns.amazonaws.com"]
+        }
+      ]
+      conditions = [
+        {
+          test     = "ArnEquals"
+          variable = "aws:SourceArn"
+          values   = [module.cidb2_inventory_sns_topic.sns_topic.arn]
         }
       ]
     }
@@ -58,12 +57,12 @@ module "lambda_collector" {
   runtime       = "python3.10"
   publish       = true
   # PERFORMANCE IMPROVEMENT: Increased timeout and memory for processing large volumes
-  timeout       = "900"   # Increased from 300 to 900 seconds (15 minutes)
-  memory_size   = "1024"  # Increased from 512MB to 1024MB
-  source_path   = "${path.module}/src/cidb2_producer"
-  create_role   = false
-  lambda_role   =  aws_iam_role.ev_ms_cidb2_inventory_role.arn
-  hash_extra = uuid()
+  timeout     = "900"  # Increased from 300 to 900 seconds (15 minutes)
+  memory_size = "1024" # Increased from 512MB to 1024MB
+  source_path = "${path.module}/src/cidb2_producer"
+  create_role = false
+  lambda_role = aws_iam_role.ev_ms_cidb2_inventory_role.arn
+  hash_extra  = uuid()
   environment_variables = {
     LAMBDA_ACCOUNT  = var.account_alias
     MEMBER_ACCOUNTS = jsonencode(var.member_accounts_ids)

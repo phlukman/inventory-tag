@@ -2,6 +2,7 @@ import boto3
 import logging
 import csv
 import io
+import os
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -105,6 +106,7 @@ def merge_csv_files(csv_contents):
         merged_content = ""
         for content in csv_contents:
             merged_content += content
+            merged_content += "\r"
 
         logger.info(f"Merged {len(csv_contents)} CSV files")
         return merged_content
@@ -173,26 +175,87 @@ def merge_csv_files_from_s3(bucket_name, object_key, region=None, profile_name=N
             # TODO: Review
             lineterminator = get_csv_dialect(content).lineterminator 
             if len(contents) >= 1:
-            
                 #print(lines)
                 filtered_row = lineterminator.join(content.splitlines()[1:])
                 #filtered_row = content
+                #contents.append("\r")
                 contents.append(filtered_row)
 
             else:
                 logger.info(f"First chunk")
                 #print(repr(content))
-                logger.info(f"Len of chunk {len(content.splitlines())}")
+                logger.info(f"Len of chunk {len(contents)}")
                 contents.append(content)
+
 
             # Merge contents
         logger.info(f"Merged {len(contents)} CSV files")
         
         merged_content = merge_csv_files(contents)
-
+        
         logger.info(f"Merged {len(contents)} CSV files from s3://{bucket_name}/{object_key}")
         return merged_content
 
     except Exception as e:
         logger.error(f"S3 error: {str(e)}")
+        raise e
         return None
+
+def save_csv_file_to_s3( bucket_name, object_key, file_name, region=None):
+    """
+    Save a local CSV file to S3.
+
+    Args:
+        s3_client: (deprecated) S3 client, not used. Use create_s3_client instead.
+        bucket_name (str): S3 bucket name
+        object_key (str): S3 object key
+        file_name (str): Local file path to upload
+        region (str, optional): AWS region
+
+    Returns:
+        bool: True if upload succeeded, False otherwise
+    """
+    try:
+        s3 = create_s3_client(region)
+        with open(file_name, 'rb') as f:
+            s3.upload_fileobj(f, bucket_name, object_key)
+        logger.info(f"Uploaded {file_name} to s3://{bucket_name}/{object_key}")
+        return True
+    except Exception as e:
+        logger.error(f"Error uploading file to S3: {str(e)}")
+        return False
+def save_csv_file_versions_to_files(bucket_name, object_key, output_dir, region=None, profile_name=None):
+    """
+    Save all versions of a CSV file from S3 to separate local CSV files.
+    Args:
+        bucket_name (str): S3 bucket name
+        object_key (str): S3 object key
+        output_dir (str): Directory to save output CSV files
+        region (str, optional): AWS region
+        profile_name (str, optional): AWS profile name
+    Returns:
+        int: Number of files saved
+    """
+    try:
+        versions = list_s3_file_versions(bucket_name, object_key, region, profile_name)
+        if not versions:
+            logger.error("No versions found.")
+            return 0
+        os.makedirs(output_dir, exist_ok=True)
+        count = 0
+        for version in versions:
+            version_id = version['VersionId']
+            content = get_s3_file_content_by_version_id(bucket_name, object_key, version_id, region, profile_name)
+            if content is not None:
+                output_file = os.path.join(
+                    output_dir,
+                    f"{os.path.basename(object_key)}.version_{version_id}.csv"
+                )
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                logger.info(f"Saved version {version_id} to {output_file}")
+                count += 1
+        return count
+    except Exception as e:
+        logger.error(f"Error saving CSV versions to files: {str(e)}")
+        return 0

@@ -4,7 +4,7 @@
 Retrieve SQS queue messages 
 
 A script for lambda to retrieve messages from SQS queue for a list of AWS services tags and generate a csv report.
-With S3 versioning to handle concurrency instead of locking.
+With S3 locking mechanism to prevent data loss from concurrent writes.
 """
 import json
 import logging
@@ -19,6 +19,7 @@ import uuid
 import time
 import random
 import traceback
+from s3_locking import log_event as s3_log_event, write_with_lock  # Rename imported function to avoid conflict
 import urllib.parse
 import argparse
 import os
@@ -33,7 +34,6 @@ logger.setLevel(logging.INFO)
 #--------------------------------------------------------
 # Lambda-provided environment variables
 EXECUTION_ENV = env.get('AWS_EXECUTION_ENV')
-TIME_FRAME = int(env.get('TIME_FRAME', 0))  # Timeframe in minutes
 
 #--------------------------------------------------------
 # Helper Functions for Data Handling
@@ -69,13 +69,6 @@ def get_service_object_key(service_name):
     # Include service name as prefix in the CSV filename
     service_csv_file = f"cidb-2.0/{year}/{month}/{safe_service_name}-{month}-{day}-{timestamp}.csv"
     return f"cidb2_reporter/{service_csv_file}"
-
-def out_put_name(timeframe):
-    windows_minutes = timeframe
-    now = datetime.datetime.now()
-    rounded_minutes = (now.minute // windows_minutes) * windows_minutes
-    adjusted_time = now.replace(minute = rounded_minutes, second=0)
-    return adjusted_time
 
 # Global default for backward compatibility
 CSV_FILE = f"cidb-2.0/{year}/{month}/{month}-{day}-{timestamp}.csv"
@@ -511,21 +504,22 @@ def messages_to_csv(messages, awsconfig_service_name, to_file=False):
 #--------------------------------------------------------------
 def read_csv_from_s3(config_client, bucket_name, object_key):
     """
-    Read a CSV file from S3 with versioning awareness
-    
+    Read a CSV file from S3
+
     Args:
-        config_client: Boto3 S3 client
         bucket_name (str): S3 bucket name
         object_key (str): S3 object key
-    
+        region (str, optional): AWS region
+        profile_name (str, optional): AWS profile name
+
     Returns:
-        dict: Result of the operation success, warning, error and version_id
+        dict: Result of the operation success, warning, error
     """
     try:
-        # Get object from S3 - this automatically gets the latest version
+
+        # Get object from S3
         response = config_client.get_object(Bucket=bucket_name, Key=object_key)
-        version_id = response.get('VersionId', 'None')
-        logger.info(f"File exists: s3://{bucket_name}/{object_key}, Version: {version_id}")
+        logger.info(f"File exists: s3://{bucket_name}/{object_key}")
 
         # Read CSV content
         csv_content = response['Body'].read().decode('utf-8')
@@ -536,18 +530,17 @@ def read_csv_from_s3(config_client, bucket_name, object_key):
         # Convert to list of dictionaries
         rows = list(csv_reader)
 
-        logger.info(f"Read {len(rows)} rows from s3://{bucket_name}/{object_key}, Version: {version_id}")
+        logger.info(f"Read {len(rows)} rows from s3://{bucket_name}/{object_key}")
         return {
             "status": "success",
             "bucket": bucket_name,
             "key": object_key,
-            "version_id": version_id,
             "rows": rows
         }
     
     except config_client.exceptions.ClientError as e:
         if e.response['Error']['Code'] == 'NoSuchKey':
-             logger.warning(f"File does not exist: s3://{bucket_name}/{object_key}")
+             logger.warning(f"File does not exists: s3://{bucket_name}/{object_key}")
              return {
                  "status": "warning",
                 "bucket": bucket_name,
@@ -563,51 +556,57 @@ def read_csv_from_s3(config_client, bucket_name, object_key):
                 "rows": []
             }
 
-def write_csv_to_s3(config_client, rows, bucket_name, object_key, request_id=None):
+def write_csv_to_s3(config_client, rows, bucket_name, object_key, lock_id=None, request_id=None):
     """
-    Write CSV rows to S3 using versioning instead of locking
+    Write CSV rows to S3
     
     Args:
         config_client: Boto3 S3 client
         rows: List of dictionaries representing CSV rows
         bucket_name: S3 bucket name
         object_key: S3 object key
+        lock_id: Optional lock ID for logging
         request_id: Unique ID for the current request for tracing
         
     Returns:
-        dict: Upload result including version_id
+        dict: Upload result
     """
-    log_event("info", "Writing rows to S3", 
+    lock_info = f" with lock ID {lock_id}" if lock_id else ""
+    s3_log_event("info", "Writing rows to S3", 
               request_id=request_id,
               bucket=bucket_name, 
               object_key=object_key, 
-              row_count=len(rows))
+              row_count=len(rows), 
+              lock_id=lock_id if lock_id else None)
     
     try:
         # Create CSV in memory
         start_time = time.time()
-        csv_buffer = io.StringIO(newline="")
-        
+        csv_buffer = io.StringIO()
+        #csv.field_size_limit(10_000_000)
+   
         if rows:
             # Get fieldnames from the first row
             fieldnames = rows[0].keys()
             if fieldnames is None:
                 fieldnames = ['Type', 'Arn', 'Tags', 'AWSConfig']
-                log_event("warning", "No fieldnames found in rows, using default", 
+                s3_log_event("warning", "No fieldnames found in rows, using default", 
                           request_id=request_id,
                           bucket=bucket_name, 
                           object_key=object_key, 
                           default_fieldnames=fieldnames)
             
             # Write CSV
-            writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames, lineterminator="\r\n")
+            writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
             writer.writeheader()
+            # DEBUG
+            #logger.info(f"Rows before write to csv buffer:{rows}")
             writer.writerows(rows)
             csv_prep_time = time.time() - start_time
             
-            # Upload to S3 - S3 versioning will automatically create a new version
+            # Upload to S3
             upload_start_time = time.time()
-            response = config_client.put_object(
+            config_client.put_object(
                 Bucket=bucket_name,
                 Key=object_key,
                 Body=csv_buffer.getvalue(),
@@ -616,15 +615,12 @@ def write_csv_to_s3(config_client, rows, bucket_name, object_key, request_id=Non
             upload_time = time.time() - upload_start_time
             total_time = time.time() - start_time
             
-            # Get the version ID from the response
-            version_id = response.get('VersionId', 'None')
-            
-            log_event("info", "Successfully wrote rows to S3", 
+            s3_log_event("info", "Successfully wrote rows to S3", 
                       request_id=request_id,
                       bucket=bucket_name, 
                       object_key=object_key, 
-                      row_count=len(rows),
-                      version_id=version_id,
+                      row_count=len(rows), 
+                      lock_id=lock_id if lock_id else None,
                       csv_prep_time_seconds=round(csv_prep_time, 3),
                       upload_time_seconds=round(upload_time, 3),
                       total_time_seconds=round(total_time, 3))
@@ -633,15 +629,15 @@ def write_csv_to_s3(config_client, rows, bucket_name, object_key, request_id=Non
                 "status": "success",
                 "bucket": bucket_name,
                 "key": object_key,
-                "version_id": version_id,
                 "rows": len(rows)
             }
         else:
             # No rows to write
-            log_event("warning", "No rows to write to S3", 
+            s3_log_event("warning", "No rows to write to S3", 
                       request_id=request_id,
                       bucket=bucket_name, 
-                      object_key=object_key)
+                      object_key=object_key, 
+                      lock_id=lock_id if lock_id else None)
                       
             return {
                 "status": "warning",
@@ -650,10 +646,11 @@ def write_csv_to_s3(config_client, rows, bucket_name, object_key, request_id=Non
                 "message": "No rows to write"
             }
     except Exception as e:
-        log_event("error", "Error writing to S3", 
+        s3_log_event("error", "Error writing to S3", 
                   request_id=request_id,
                   bucket=bucket_name, 
                   object_key=object_key, 
+                  lock_id=lock_id if lock_id else None,
                   error=str(e),
                   traceback=traceback.format_exc())
                   
@@ -664,26 +661,29 @@ def write_csv_to_s3(config_client, rows, bucket_name, object_key, request_id=Non
             "key": object_key
         }
 
-def log_event(level, message, **kwargs):
+def write_csv_to_s3_with_lock(config_client, rows, bucket_name, object_key, max_attempts=None, request_id=None):
     """
-    Log an event with structured data
+    Write CSV rows to S3 with locking mechanism
     
     Args:
-        level: Log level (info, warning, error)
-        message: Log message
-        kwargs: Additional structured data to log
+        config_client: Boto3 S3 client
+        rows: List of dictionaries representing CSV rows
+        bucket_name: S3 bucket name
+        object_key: S3 object key
+        max_attempts: Maximum number of retry attempts for lock acquisition
+        request_id: Unique ID for the current request for tracing
+        
+    Returns:
+        dict: Upload result
     """
-    log_data = {"message": message}
-    log_data.update(kwargs)
+    # Define a writer function to pass to write_with_lock
+    def writer_func(lock_id):
+        return write_csv_to_s3(config_client, rows, bucket_name, object_key, lock_id, request_id)
     
-    if level.lower() == "info":
-        logger.info(json.dumps(log_data))
-    elif level.lower() == "warning":
-        logger.warning(json.dumps(log_data))
-    elif level.lower() == "error":
-        logger.error(json.dumps(log_data))
-    else:
-        logger.info(json.dumps(log_data))
+    # Use the s3_locking module's write_with_lock function
+    return write_with_lock(
+        config_client, bucket_name, object_key, writer_func, max_attempts, request_id
+    )
 
 #--------------------------------------------------------
 # Set S3 Client
@@ -721,7 +721,7 @@ def lambda_handler(event, context):
     request_id = str(uuid.uuid4())
     execution_start_time = time.time()
     
-    log_event("info", "Starting Lambda execution", 
+    s3_log_event("info", "Starting Lambda execution", 
                request_id=request_id,
                execution_env=EXECUTION_ENV if EXECUTION_ENV else "local",
                lambda_function="cidb2_reporter")
@@ -747,7 +747,7 @@ def lambda_handler(event, context):
         # Process messages stage
         stage_start = time.time()
         if EXECUTION_ENV:
-            log_event("info", "Reading messages from Lambda Event", 
+            s3_log_event("info", "Reading messages from Lambda Event", 
                        request_id=request_id)
             
             # Track failed message identifiers
@@ -757,7 +757,7 @@ def lambda_handler(event, context):
             try:
                 raw_messages = read_messages_from_event(event)
             except Exception as e:
-                log_event("error", "Failed to read messages from event", 
+                s3_log_event("error", "Failed to read messages from event", 
                           request_id=request_id,
                           error=str(e),
                           traceback=traceback.format_exc())
@@ -769,7 +769,7 @@ def lambda_handler(event, context):
             #current_messages = read_csv_from_s3(s3, BUCKET_NAME, OBJECT_KEY)
             stage_timings["s3_read_time"] = round((time.time() - s3_read_start) * 1000, 2)
         else:
-            log_event("info", "Reading messages directly from SQS", 
+            s3_log_event("info", "Reading messages directly from SQS", 
                        request_id=request_id,
                        queue_url=QUEUE_URL)
             raw_messages = read_messages_from_sqs(queue_url=QUEUE_URL)
@@ -779,12 +779,12 @@ def lambda_handler(event, context):
         # Log message count metrics
         total_message_count = sum(len(messages) for messages in raw_messages.values())
         metrics["message_count"] = total_message_count
-        log_event("info", "Received messages", 
+        s3_log_event("info", "Received messages", 
                    request_id=request_id,
                    message_count=metrics["message_count"])
         
         if metrics["message_count"] == 0:
-            log_event("info", "No messages to process", 
+            s3_log_event("info", "No messages to process", 
                        request_id=request_id)
             metrics["status"] = "no_messages"
             metrics["total_time_ms"] = round((time.time() - execution_start_time) * 1000, 2)
@@ -810,7 +810,7 @@ def lambda_handler(event, context):
             # Track count of messages by service
             messages_count = len(service_messages)
             
-            log_event("info", "Processing messages for service", 
+            s3_log_event("info", "Processing messages for service", 
                       request_id=request_id,
                       service=service_name,
                       message_count=messages_count)
@@ -830,7 +830,7 @@ def lambda_handler(event, context):
                     # Update success metrics
                     metrics["successful_messages"] += messages_count
                     
-                    log_event("info", "Converted service messages to CSV rows", 
+                    s3_log_event("info", "Converted service messages to CSV rows", 
                               request_id=request_id,
                               service=service_name,
                               message_count=messages_count,
@@ -840,7 +840,7 @@ def lambda_handler(event, context):
                     metrics["failed_messages"] += messages_count
                     failed_message_ids.append(service_name)
                     
-                    log_event("error", "Failed to process service messages", 
+                    s3_log_event("error", "Failed to process service messages", 
                               request_id=request_id,
                               service=service_name,
                               message_count=messages_count,
@@ -851,7 +851,7 @@ def lambda_handler(event, context):
         metrics["csv_row_count"] = len(all_csv_rows)
         stage_timings["csv_processing_time"] = round((time.time() - csv_processing_start) * 1000, 2)
         
-        log_event("info", "Completed message batch processing", 
+        s3_log_event("info", "Completed message batch processing", 
                   request_id=request_id,
                   total_message_count=metrics["message_count"],
                   total_csv_row_count=metrics["csv_row_count"])
@@ -869,33 +869,29 @@ def lambda_handler(event, context):
                     # Generate service-specific object key
                     service_object_key = get_service_object_key(service_name)
                     
-                    log_event("info", "Writing service CSV data to S3", 
+                    s3_log_event("info", "Writing service CSV data to S3", 
                               request_id=request_id,
                               service=service_name,
                               object_key=service_object_key)
                     
                     # Read existing CSV data for this service
                     #current_service_data = read_csv_from_s3(s3, BUCKET_NAME, service_object_key, request_id=request_id)
-                    ''' TODO: With versioning every lambda instance write to different version.
-                              Reading operations must be synchronized          
-                    '''
-
-                    # current_service_data = read_csv_from_s3(s3, BUCKET_NAME, service_object_key)
+                    current_service_data = read_csv_from_s3(s3, BUCKET_NAME, service_object_key)
                     
-                    # if current_service_data["status"] == "success":
-                    #     # Combine existing and new rows
-                    #     existing_rows = len(current_service_data['rows'])
-                    #     log_event("info", "Appending new rows to existing service CSV data", 
-                    #               request_id=request_id,
-                    #               service=service_name,
-                    #               existing_row_count=existing_rows,
-                    #               new_row_count=len(service_rows))
+                    if current_service_data["status"] == "success":
+                        # Combine existing and new rows
+                        existing_rows = len(current_service_data['rows'])
+                        s3_log_event("info", "Appending new rows to existing service CSV data", 
+                                  request_id=request_id,
+                                  service=service_name,
+                                  existing_row_count=existing_rows,
+                                  new_row_count=len(service_rows))
                                   
-                    #     service_rows.extend(current_service_data['rows'])
+                        service_rows.extend(current_service_data['rows'])
                     
                     # Write service rows to S3
                     s3_write_start = time.time()
-                    write_result = write_csv_to_s3(s3, service_rows, BUCKET_NAME, service_object_key, request_id=request_id)
+                    write_result = write_csv_to_s3_with_lock(s3, service_rows, BUCKET_NAME, service_object_key, request_id=request_id)
                     service_write_time = round((time.time() - s3_write_start) * 1000, 2)
                     
                     if write_result["status"] != "success":
@@ -903,7 +899,7 @@ def lambda_handler(event, context):
                         if service_name not in failed_message_ids:
                             failed_message_ids.append(service_name)
                     
-                    log_event("info", "Service CSV write completed", 
+                    s3_log_event("info", "Service CSV write completed", 
                               request_id=request_id,
                               service=service_name,
                               status=write_result["status"],
@@ -914,7 +910,7 @@ def lambda_handler(event, context):
                     if service_name not in failed_message_ids:
                         failed_message_ids.append(service_name)
                     
-                    log_event("error", "Failed to write service data to S3", 
+                    s3_log_event("error", "Failed to write service data to S3", 
                               request_id=request_id,
                               service=service_name,
                               error=str(e),
@@ -931,7 +927,7 @@ def lambda_handler(event, context):
             metrics["status"] = "error"
             error_message = f"Failed to process {len(failed_message_ids)} services out of {len(raw_messages)}"
             
-            log_event("warning", "Some messages failed processing", 
+            s3_log_event("warning", "Some messages failed processing", 
                       request_id=request_id,
                       failed_services=failed_message_ids,
                       failed_count=len(failed_message_ids),
@@ -942,7 +938,7 @@ def lambda_handler(event, context):
             raise Exception(error_message)
         
         # Log final execution metrics
-        log_event("info", "Lambda execution completed successfully", 
+        s3_log_event("info", "Lambda execution completed successfully", 
                   request_id=request_id,
                   metrics=metrics,
                   stage_timings=stage_timings)
@@ -958,7 +954,7 @@ def lambda_handler(event, context):
         metrics["total_time_ms"] = execution_time
         metrics["status"] = "error"
         
-        log_event("error", "Error in Lambda execution - Messages will be returned to queue", 
+        s3_log_event("error", "Error in Lambda execution - Messages will be returned to queue", 
                   request_id=request_id,
                   error=str(e),
                   traceback=traceback.format_exc(),

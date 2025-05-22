@@ -52,7 +52,7 @@ variable "sns_kms_key_arn" {
 
 variable "cidb_app_source_bucket_key_arn" {
   description = "S3 encryption key"
-  type = string
+  type        = string
 }
 
 variable "s3_bucket_name" {
