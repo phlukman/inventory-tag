@@ -104,6 +104,36 @@ def validate_sqs_empty(sqs_url:  str) -> bool:
         logging.error(f"Error checking SQS queue: {e}")
         return False
 
+def wait_for_empty_queue(sqs_url, max_attempts=5, initial_backoff=60, backoff_multiplier=2):
+    """
+    Wait for the SQS queue to become empty, using exponential backoff.
+    
+    Args:
+        sqs_url (str): URL of the SQS queue to check
+        max_attempts (int): Maximum number of attempts to check if queue is empty
+        initial_backoff (int): Initial backoff time in seconds
+        backoff_multiplier (float): Multiplier for exponential backoff
+        
+    Returns:
+        bool: True if queue becomes empty, False if max attempts reached and queue still not empty
+    """
+    for attempt in range(1, max_attempts + 1):
+        logger.info(f"Checking if SQS queue is empty (attempt {attempt}/{max_attempts})")
+        
+        if validate_sqs_empty(sqs_url):
+            logger.info(f"SQS queue is empty after {attempt} attempts")
+            return True
+        
+        if attempt < max_attempts:
+            wait_time = initial_backoff * (backoff_multiplier ** (attempt - 1))
+            logger.info(f"SQS queue not empty. Waiting {wait_time} seconds before retry...")
+            time.sleep(wait_time)
+        else:
+            logger.warning(f"SQS queue still not empty after {max_attempts} attempts.")
+            return False
+    
+    return False  # This should not be reached but added for safety
+
 def write_csv_buffer_to_s3(config_client,csv_buffer,bucket_name, object_key):
     """
     Write CSV buffer to S3
@@ -138,11 +168,14 @@ def write_csv_buffer_to_s3(config_client,csv_buffer,bucket_name, object_key):
         error_message = e.response['Error']['Message']
         logger.error(f"S3 error: {error_code} - {error_message}")
 
-
 def lambda_handler(event, context):
     try:
-
-        if  validate_sqs_empty(SQS_URL):
+        # Use the new function with parameters from environment variables or defaults
+        max_attempts = int(env.get("MAX_QUEUE_CHECK_ATTEMPTS", 5))
+        initial_backoff = int(env.get("INITIAL_BACKOFF_SECONDS", 60))
+        backoff_multiplier = float(env.get("BACKOFF_MULTIPLIER", 2.0))
+        
+        if wait_for_empty_queue(SQS_URL, max_attempts, initial_backoff, backoff_multiplier):
             logger.info("SQS queue is empty. Proceeding with S3 operations.")
     
             s3_client = create_s3_client(region="us-east-1")
@@ -169,12 +202,20 @@ def lambda_handler(event, context):
                 return
 
             logger.info("CSV files processed and merged successfully.")
-
-            #srv_name = re.sub(r':+', '_',service_name)
-            #srv_csv_file = f"cidb2_reporter/cidb-2.0/{year}/{month}/"
-            #merge_csv_files_from_s3_v1(BUCKET_NAME, srv_csv_file)
+            return {
+                "statusCode": 200,
+                "body": "Merge operation completed successfully"
+            }
+        else:
+            logger.warning("Merge operation postponed as SQS queue is not empty after maximum retries.")
+            return {
+                "statusCode": 202,
+                "body": "SQS queue not empty after maximum retries. Merge operation postponed."
+            }
+            
     except Exception as e:
-        logging.error(e)
+        logging.error(f"Error in lambda_handler: {str(e)}")
         raise e
+
 if __name__ == "__main__":
     lambda_handler(None, None)

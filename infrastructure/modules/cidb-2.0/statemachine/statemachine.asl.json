@@ -65,9 +65,9 @@
                     }
                 }
             ],
-            "Next": "Lambda  Merge"
+            "Next": "Lambda_Merge"
         },
-        "Lambda  Merge": {
+        "Lambda_Merge": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
             "Output": "{% $states.result.Payload %}",
