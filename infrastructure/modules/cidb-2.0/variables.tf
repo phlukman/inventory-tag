@@ -59,3 +59,10 @@ variable "s3_bucket_name" {
   description = "S3 bucket name where the CIDB data will be stored"
   type        = string
 }
+
+# Variable to receive the expected role ARNs from the terraform-landing-zone-iam-service-roles module
+variable "iam_policy_inventory_role_arns" {
+  description = "Map of account IDs to IAM policy inventory role ARNs from the terraform-landing-zone-iam-service-roles module"
+  type        = map(string)
+  default     = {} # Default empty map allows the module to be applied without dependencies
+}

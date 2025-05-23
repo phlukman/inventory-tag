@@ -37,3 +37,14 @@ output "cidb2_lambda_role_arn" {
   description = "The ARN of the IAM role for the Lambda functions"
   value       = aws_iam_role.ev_ms_cidb2_inventory_role.arn
 }
+
+# Output to confirm the attachment and show which role ARNs can be assumed
+output "lambda_iam_inventory_policy_attached" {
+  description = "Confirmation that the IAM Policy Inventory Assumer policy is attached to the Lambda execution role"
+  value       = "IAM Policy Inventory Assumer policy attached to ${aws_iam_role.ev_ms_cidb2_inventory_role.name}"
+}
+
+output "assumable_iam_policy_inventory_roles" {
+  description = "List of IAM policy inventory role ARNs that can be assumed by the Lambda"
+  value       = length(var.iam_policy_inventory_role_arns) > 0 ? values(var.iam_policy_inventory_role_arns) : ["Using wildcard pattern: arn:aws:iam::*:role/EvIAMPolicyInventoryMemberAccountRole"]
+}
