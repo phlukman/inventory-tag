@@ -2,8 +2,7 @@
 # SQS Queue and DLQ queue                                                      #
 #------------------------------------------------------------------------------#
 module "cidb2_sqs_queue" {
-  # source = "github.com/Eaton-Vance-Corp/terraform-aws-sqs-queue?ref=v1.0.1"
-  source = "github.com/Eaton-Vance-Corp/terraform-aws-sqs-queue?ref=IACS-6851"
+  source = "github.com/Eaton-Vance-Corp/terraform-aws-sqs-queue?ref=v1.1.3"
   name   = "${var.short_env}-cidb2-sqs-queue"
   redrive_policy = jsonencode(
     {
@@ -48,10 +47,11 @@ resource "aws_sqs_queue" "dlq" {
 #-----------------------------------------------------------------------#
 #TODO: Create a separate policy
 module "lambda_collector" {
-  for_each      = var.service_by_category
-  source        = "terraform-aws-modules/lambda/aws"
-  version       = "5.3.0"
-  function_name = "${var.short_env}-cidb2-collector-${each.key}"
+  for_each = var.service_by_category
+  source   = "terraform-aws-modules/lambda/aws"
+  version  = "5.3.0"
+  #function_name = "${var.short_env}-cidb2-collector-${each.key}"
+  function_name = "get-${lower(each.key)}-metadata"
   description   = "Lambda function to get tags from a service list"
   handler       = "main.lambda_handler"
   runtime       = "python3.10"
@@ -64,9 +64,17 @@ module "lambda_collector" {
   lambda_role = aws_iam_role.ev_ms_cidb2_inventory_role.arn
   hash_extra  = uuid()
   environment_variables = {
-    LAMBDA_ACCOUNT  = var.account_alias
-    MEMBER_ACCOUNTS = jsonencode(var.member_accounts_ids)
-    SNS_TOPIC_ARN   = module.cidb2_inventory_sns_topic.sns_topic.arn
+    LAMBDA_ACCOUNT = var.account_alias
+    # Testing full account list in non prod
+    MEMBER_ACCOUNTS = jsonencode(local.member_account_ids)
+    # MEMBER_ACCOUNTS = jsonencode(var.member_accounts_ids)
+    SNS_TOPIC_ARN  = module.cidb2_inventory_sns_topic.sns_topic.arn
+    SNS_NOTIFY_ARN = var.sns_topic_arn
+    REGIONS        = "us-east-1, us-east-2, us-west-2"
+    ASSUME_ROLE    = local.app_role
+    AWS_ENV        = var.short_env
+    BUCKET_NAME    = var.s3_bucket_name
+    SPLIT_FACTOR   = 3
   }
 }
 

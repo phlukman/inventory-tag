@@ -48,3 +48,8 @@ output "assumable_iam_policy_inventory_roles" {
   description = "List of IAM policy inventory role ARNs that can be assumed by the Lambda"
   value       = length(var.iam_policy_inventory_role_arns) > 0 ? values(var.iam_policy_inventory_role_arns) : ["Using wildcard pattern: arn:aws:iam::*:role/EvIAMPolicyInventoryMemberAccountRole"]
 }
+
+output "step_function_role_arn" {
+  description = "The ARN of the IAM role for the Step Function"
+  value       = aws_iam_role.step_function_role.arn
+}

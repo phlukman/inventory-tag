@@ -1,26 +1,11 @@
-# #----------------------------------------------------
-# # assume-role module configuration
-# #----------------------------------------------------
-# locals {
-#   target_providers = {
-#     for idx, account in var.target_accounts :
-#     account.account_id => {
-#       account_id = account.account_id
-#       name       = account.name
-#       provider   = "aws.target_${idx}"
-#     }
-#   }
-# }
 
-
-# locals {
-#   cidb2_s3_bucket = {
-#     bucket_name = "${var.short_env}-cidb2-source-bucket-test"
-#     region      = var.region
-#   }
-# engineer_role_arn             = local.account_alias == "evsharesvcnonprod" ? "arn:aws:iam::477591219415:role/Engineer" : local.account_alias == "evsharesvcprod" ? "arn:aws:iam::435574127453:role/Engineer" : ""
-
-# }
 locals {
-    trigger_windows_time = 15
+  trigger_windows_time = 0
+  app_role             = "EvResourceTagInventoryMemberAccountRole"
+  # Testing full account list in non prod
+  ev_member_account_ids_sandbox = ["992854303108", "131696788323", "453170101838", "658302302575", "767397819526", "511182126229", "286174197317", "362895556546", "462415392569", "829689304269", "168002464918", "119173687103", "984670241748", "175316323768", "053210025230"]
+  ev_member_account_ids_nonprod = ["477591219415", "774964446426", "648478090239", "106305399484", "071703922629", "746724791886", "253295566561", "633763041547", "689208158427", "925507843314", "912981319707", "173053452863", "201872524245", "698165960104", "360201401833", "928079129283", "891377357498", "440744259050"]
+  ev_member_account_ids_prod    = ["253091533528", "575396202922", "435574127453", "450671918739", "895720729878", "667678310459", "187614575543", "423339021197", "050170277551", "155051631857", "783060173409", "059997061947", "186070883872", "247462361306", "528292876888", "498105692602", "273753702448", "949235798774", "318750475888", "580501918923", "267821145838", "381492315486", "861276083566"]
+  member_account_ids            = flatten([local.ev_member_account_ids_sandbox, local.ev_member_account_ids_nonprod, local.ev_member_account_ids_prod])
+  env_excluded_accounts         = ["067117580135", "162771817607", "233616969195", "585952001747", "627924252082", "908027984087"]
 }

@@ -16,11 +16,18 @@ resource "aws_sfn_state_machine" "cidb2_step_functions" {
   name     = "${var.short_env}-cidb2-step-function"
   role_arn = aws_iam_role.step_function_role.arn
   definition = templatefile("${path.module}/statemachine/statemachine.asl.json", {
-    lambda_merge = module.lambda_merge.lambda_function_arn
-    lambda_IAM   = module.lambda_collector["IAM"].lambda_function_arn
-    lambda_KMS   = module.lambda_collector["KMS"].lambda_function_arn
+    EvCIDB2_CWA        = module.lambda_collector["cloudwatch-appconfig_1"].lambda_function_arn
+    EvCIDB2_EC2        = module.lambda_collector["ec2-cassandra_1"].lambda_function_arn
+    EvCIDB2_EVR        = module.lambda_collector["events-route53_1"].lambda_function_arn
+    EvCIDB2_IAM_Policy = module.lambda_collector["iam-policy"].lambda_function_arn
+    lambda_CWA         = module.lambda_collector["cloudwatch-appconfig_0"].lambda_function_arn
+    lambda_EC2         = module.lambda_collector["ec2-cassandra_0"].lambda_function_arn
+    lambda_EVR         = module.lambda_collector["events-route53_0"].lambda_function_arn
+    lambda_merge       = module.lambda_merge.lambda_function_arn
+    lambda_Rebalance   = module.lambda_collector["rebalance"].lambda_function_arn
   })
   logging_configuration {
+    # TODO: Change in prod
     level           = "ALL"
     log_destination = "${aws_cloudwatch_log_group.sfn_log_group.arn}:*"
   }
@@ -32,7 +39,8 @@ resource "aws_scheduler_schedule" "trigger_inventory" {
   flexible_time_window {
     mode = "OFF"
   }
-  schedule_expression = "rate(1 day)"
+  schedule_expression = "cron(0 4 * * ? *)"
+
 
 
   target {

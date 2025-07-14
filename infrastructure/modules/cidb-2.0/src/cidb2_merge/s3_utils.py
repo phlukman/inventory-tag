@@ -3,18 +3,24 @@ import logging
 import csv
 import io
 import os
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import time
+from botocore.exceptions import ClientError, NoCredentialsError, EndpointConnectionError
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
 
 def create_s3_client(region=None, profile_name=None):
     """
     Create S3 client
-    
+
     Args:
         region (str, optional): AWS region
         profile_name (str, optional): AWS profile name
-        
+
     Returns:
         boto3.client: S3 client
     """
@@ -23,23 +29,25 @@ def create_s3_client(region=None, profile_name=None):
         session = boto3.Session(region_name=region, profile_name=profile_name)
 
         # Create S3 client
-        s3 = session.client('s3')
+        s3 = session.client("s3")
 
         return s3
 
     except Exception as e:
         logger.error(f"S3 error: {str(e)}")
         return None
+
+
 def list_s3_file_versions(bucket_name, object_key, region=None, profile_name=None):
     """
     List all versions of an object in S3 bucket
-    
+
     Args:
         bucket_name (str): S3 bucket name
         object_key (str): S3 object key
         region (str, optional): AWS region
         profile_name (str, optional): AWS profile name
-        
+
     Returns:
         list: List of versions
     """
@@ -48,12 +56,24 @@ def list_s3_file_versions(bucket_name, object_key, region=None, profile_name=Non
         s3 = create_s3_client(region, profile_name)
 
         # List object versions
-        response = s3.list_object_versions(Bucket=bucket_name, Prefix=object_key)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = s3.list_object_versions(
+                    Bucket=bucket_name, Prefix=object_key
+                )
+                break
+            except Exception as e:
+                logger.warning(f"Attempt {attempt+1} failed: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(2**attempt)
+                else:
+                    return []
 
         # Extract versions
-        versions = response.get('Versions', [])
+        versions = response.get("Versions", [])
 
-        #logger.info(f"Found {len(versions)} versions of s3://{bucket_name}/{object_key}")
+        # logger.info(f"Found {len(versions)} versions of s3://{bucket_name}/{object_key}")
         logger.info(f"Found {len(versions)} versions")
         return versions
 
@@ -61,7 +81,10 @@ def list_s3_file_versions(bucket_name, object_key, region=None, profile_name=Non
         logger.error(f"S3 error: {str(e)}")
         return []
 
-def get_s3_file_content_by_version_id(bucket_name, object_key, version_id, region=None, profile_name=None):
+
+def get_s3_file_content_by_version_id(
+    bucket_name, object_key, version_id, region=None, profile_name=None
+):
     """
     Get S3 file content by version ID
 
@@ -80,17 +103,23 @@ def get_s3_file_content_by_version_id(bucket_name, object_key, version_id, regio
         s3 = create_s3_client(region, profile_name)
 
         # Get object
-        response = s3.get_object(Bucket=bucket_name, Key=object_key, VersionId=version_id)
+        response = s3.get_object(
+            Bucket=bucket_name, Key=object_key, VersionId=version_id
+        )
 
         # Read content
-        content = response['Body'].read().decode('utf-8')
+        content = response["Body"].read().decode("utf-8")
 
-        logger.info(f"Read {len(content)} bytes from s3://{bucket_name}/{object_key} version {version_id}")
+        logger.info(
+            f"Read {len(content)} bytes from s3://{bucket_name}/{object_key} version {version_id}"
+        )
         return content
 
     except Exception as e:
         logger.error(f"S3 error: {str(e)}")
         return None
+
+
 def merge_csv_files(csv_contents):
     """
     Merge CSV files
@@ -114,6 +143,8 @@ def merge_csv_files(csv_contents):
     except Exception as e:
         logger.error(f"Error merging CSV files: {str(e)}")
         return None
+
+
 def get_csv_dialect(content):
     """
     Get CSV dialect from content
@@ -129,7 +160,7 @@ def get_csv_dialect(content):
         sample_row = next(csv_reader)
 
         # Detect dialect
-        dialect = csv.Sniffer().sniff(content, delimiters=[',', ';', '\t'])
+        dialect = csv.Sniffer().sniff(content, delimiters=[",", ";", "\t"])
 
         logger.info(f"Detected CSV dialect: {dialect}")
         logger.info(f"Line terminator:{repr(dialect.lineterminator)}")
@@ -143,65 +174,8 @@ def get_csv_dialect(content):
         logger.error(f"Error detecting CSV dialect: {str(e)}")
         return None
 
-def merge_csv_files_from_s3(bucket_name, object_key, region=None, profile_name=None):
-    """
-    Merge CSV files from S3 bucket
 
-    Args:
-        bucket_name (str): S3 bucket name
-        object_key (str): S3 object key
-        region (str, optional): AWS region
-        profile_name (str, optional): AWS profile name
-
-    Returns:
-        str: Merged CSV content
-    """
-    try:
-        # Create S3 client
-        s3 = create_s3_client(region, profile_name)
-
-        # List object versions
-        versions = list_s3_file_versions(bucket_name, object_key, region, profile_name)
-
-        # Sort versions by LastModified in descending order
-        sorted_versions = sorted(versions, key=lambda x: x['LastModified'], reverse=True)
-
-
-        # Get content from each version
-        contents = []
-        for version in sorted_versions:
-            version_id = version['VersionId']
-            content = get_s3_file_content_by_version_id(bucket_name, object_key, version_id, region, profile_name)
-            # TODO: Review
-            lineterminator = get_csv_dialect(content).lineterminator 
-            if len(contents) >= 1:
-                #print(lines)
-                filtered_row = lineterminator.join(content.splitlines()[1:])
-                #filtered_row = content
-                #contents.append("\r")
-                contents.append(filtered_row)
-
-            else:
-                logger.info(f"First chunk")
-                #print(repr(content))
-                logger.info(f"Len of chunk {len(contents)}")
-                contents.append(content)
-
-
-            # Merge contents
-        logger.info(f"Merged {len(contents)} CSV files")
-        
-        merged_content = merge_csv_files(contents)
-        
-        logger.info(f"Merged {len(contents)} CSV files from s3://{bucket_name}/{object_key}")
-        return merged_content
-
-    except Exception as e:
-        logger.error(f"S3 error: {str(e)}")
-        raise e
-        return None
-
-def save_csv_file_to_s3( bucket_name, object_key, file_name, region=None):
+def save_csv_file_to_s3(bucket_name, object_key, file_name, region=None):
     """
     Save a local CSV file to S3.
 
@@ -217,14 +191,18 @@ def save_csv_file_to_s3( bucket_name, object_key, file_name, region=None):
     """
     try:
         s3 = create_s3_client(region)
-        with open(file_name, 'rb') as f:
+        with open(file_name, "rb") as f:
             s3.upload_fileobj(f, bucket_name, object_key)
         logger.info(f"Uploaded {file_name} to s3://{bucket_name}/{object_key}")
         return True
     except Exception as e:
         logger.error(f"Error uploading file to S3: {str(e)}")
         return False
-def save_csv_file_versions_to_files(bucket_name, object_key, output_dir, region=None, profile_name=None):
+
+
+def save_csv_file_versions_to_files(
+    bucket_name, object_key, output_dir, region=None, profile_name=None
+):
     """
     Save all versions of a CSV file from S3 to separate local CSV files.
     Args:
@@ -244,14 +222,16 @@ def save_csv_file_versions_to_files(bucket_name, object_key, output_dir, region=
         os.makedirs(output_dir, exist_ok=True)
         count = 0
         for version in versions:
-            version_id = version['VersionId']
-            content = get_s3_file_content_by_version_id(bucket_name, object_key, version_id, region, profile_name)
+            version_id = version["VersionId"]
+            content = get_s3_file_content_by_version_id(
+                bucket_name, object_key, version_id, region, profile_name
+            )
             if content is not None:
                 output_file = os.path.join(
                     output_dir,
-                    f"{os.path.basename(object_key)}.version_{version_id}.csv"
+                    f"{os.path.basename(object_key)}.version_{version_id}.csv",
                 )
-                with open(output_file, 'w', encoding='utf-8') as f:
+                with open(output_file, "w", encoding="utf-8") as f:
                     f.write(content)
                 logger.info(f"Saved version {version_id} to {output_file}")
                 count += 1
@@ -259,3 +239,61 @@ def save_csv_file_versions_to_files(bucket_name, object_key, output_dir, region=
     except Exception as e:
         logger.error(f"Error saving CSV versions to files: {str(e)}")
         return 0
+
+
+def delete_all_versions_of_csv(bucket_name, key, region="us-east-1"):
+    """
+    Delete all versions of the specified CSV file from the given S3 bucket,
+    with error handling and logging.
+
+    :param bucket_name: Name of the S3 bucket
+    :param key: S3 object key (e.g., 'path/to/myfile.csv')
+    """
+    s3 = create_s3_client(region)
+    try:
+        paginator = s3.get_paginator("list_object_versions")
+        found = False
+        for page in paginator.paginate(Bucket=bucket_name, Prefix=key):
+            versions = page.get("Versions", [])
+            delete_markers = page.get("DeleteMarkers", [])
+
+            # Delete all file versions
+            for version in versions:
+                if version["Key"] == key:
+                    found = True
+                    try:
+                        s3.delete_object(
+                            Bucket=bucket_name, Key=key, VersionId=version["VersionId"]
+                        )
+                        logger.info(f"Deleted version: {version['VersionId']} of {key}")
+                    except ClientError as e:
+                        logger.info(
+                            f"Failed to delete version {version['VersionId']}: {e}"
+                        )
+
+            # Delete all delete markers
+            for marker in delete_markers:
+                if marker["Key"] == key:
+                    found = True
+                    try:
+                        s3.delete_object(
+                            Bucket=bucket_name, Key=key, VersionId=marker["VersionId"]
+                        )
+                        logger.info(
+                            f"Deleted delete marker: {marker['VersionId']} of {key}"
+                        )
+                    except ClientError as e:
+                        logger.info(
+                            f"Failed to delete delete marker {marker['VersionId']}: {e}"
+                        )
+        if not found:
+            logger.info(f"No versions found for {key} in bucket {bucket_name}")
+        return True
+    except NoCredentialsError:
+        logger.info("AWS credentials not found. Please configure your AWS credentials.")
+    except EndpointConnectionError as e:
+        logger.info(f"Could not connect to the endpoint: {e}")
+    except ClientError as e:
+        logger.info(f"An error occurred: {e}")
+    except Exception as e:
+        logger.info(f"Unexpected error: {e}")

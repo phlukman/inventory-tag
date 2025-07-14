@@ -3,7 +3,7 @@ module "lambda_reporter" {
 
   source        = "terraform-aws-modules/lambda/aws"
   version       = "5.3.0"
-  function_name = "${var.short_env}-cidb2-reporter"
+  function_name = "get-reporter-metadata"
   description   = "Lambda function to get tags from SQS queue and generate a custom report "
   handler       = "main.lambda_handler"
   runtime       = "python3.10"
@@ -27,7 +27,7 @@ module "lambda_reporter" {
     LOCK_MAX_ATTEMPTS         = "5"
     LOCK_BASE_BACKOFF_SECONDS = "2.0"
     LOCK_JITTER_FACTOR        = "1.0"
-     TIME_FRAME = local.trigger_windows_time
+    TIME_FRAME                = local.trigger_windows_time
   }
 }
 
@@ -45,7 +45,7 @@ module "lambda_merge" {
 
   source        = "terraform-aws-modules/lambda/aws"
   version       = "5.3.0"
-  function_name = "${var.short_env}-cidb2-merge"
+  function_name = "get-merge-metadata"
   description   = "Lambda function to get tags from SQS queue and generate a custom report "
   handler       = "main.lambda_handler"
   runtime       = "python3.10"
@@ -62,10 +62,11 @@ module "lambda_merge" {
   create_role = false
   lambda_role = aws_iam_role.ev_ms_cidb2_inventory_role.arn
   environment_variables = {
-    SQS_URL       = module.cidb2_sqs_queue.id
-    BUCKET_NAME   = var.s3_bucket_name
-    INITIAL_DELAY = 15
-    MAX_RETRIES   = 5
-    TIME_FRAME = local.trigger_windows_time
+    SQS_URL          = module.cidb2_sqs_queue.id
+    BUCKET_NAME      = var.s3_bucket_name
+    INITIAL_DELAY    = 15
+    MAX_RETRIES      = 5
+    TIME_FRAME       = local.trigger_windows_time
+    LAMBDA_REBALANCE = module.lambda_collector["rebalance"].lambda_function_name
   }
 }

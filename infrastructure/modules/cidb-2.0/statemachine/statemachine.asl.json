@@ -1,21 +1,20 @@
 {
-    "Comment": "A description of my state machine",
-    "QueryLanguage": "JSONata",
+    "Comment": "CIDB2 Inventory Step Function",
     "StartAt": "Parallel",
     "States": {
         "Parallel": {
             "Type": "Parallel",
             "Branches": [
                 {
-                    "StartAt": "Lambda IAM",
+                    "StartAt": "lambda_EC2",
                     "States": {
-                        "Lambda IAM": {
+                        "lambda_EC2": {
                             "Type": "Task",
                             "Resource": "arn:aws:states:::lambda:invoke",
-                            "Output": "{% $states.result.Payload %}",
-                            "Arguments": {
-                                "FunctionName": "${lambda_IAM}",
-                                "Payload": "{% $states.input %}"
+                            "ResultPath": null,
+                            "Parameters": {
+                                "FunctionName": "${lambda_EC2}",
+                                "Payload.$": "$"
                             },
                             "Retry": [
                                 {
@@ -36,15 +35,15 @@
                     }
                 },
                 {
-                    "StartAt": "Lambda KMS",
+                    "StartAt": "EvCIDB2_EC2",
                     "States": {
-                        "Lambda KMS": {
+                        "EvCIDB2_EC2": {
                             "Type": "Task",
                             "Resource": "arn:aws:states:::lambda:invoke",
-                            "Output": "{% $states.result.Payload %}",
-                            "Arguments": {
-                                "FunctionName": "${lambda_KMS}",
-                                "Payload": "{% $states.input %}"
+                            "ResultPath": null,
+                            "Parameters": {
+                                "FunctionName": "${EvCIDB2_EC2}",
+                                "Payload.$": "$"
                             },
                             "Retry": [
                                 {
@@ -63,6 +62,203 @@
                             "End": true
                         }
                     }
+                },
+                {
+                    "StartAt": "Lambda_CWA",
+                    "States": {
+                        "Lambda_CWA": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::lambda:invoke",
+                            "ResultPath": null,
+                            "Parameters": {
+                                "FunctionName": "${lambda_CWA}",
+                                "Payload.$": "$"
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "Lambda.ServiceException",
+                                        "Lambda.AWSLambdaException",
+                                        "Lambda.SdkClientException",
+                                        "Lambda.TooManyRequestsException"
+                                    ],
+                                    "IntervalSeconds": 1,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                    "JitterStrategy": "FULL"
+                                }
+                            ],
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "EvCIDB2_CWA",
+                    "States": {
+                        "EvCIDB2_CWA": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::lambda:invoke",
+                            "ResultPath": null,
+                            "Parameters": {
+                                "FunctionName": "${EvCIDB2_CWA}",
+                                "Payload.$": "$"
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "Lambda.ServiceException",
+                                        "Lambda.AWSLambdaException",
+                                        "Lambda.SdkClientException",
+                                        "Lambda.TooManyRequestsException"
+                                    ],
+                                    "IntervalSeconds": 1,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                    "JitterStrategy": "FULL"
+                                }
+                            ],
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "Lambda_EVR",
+                    "States": {
+                        "Lambda_EVR": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::lambda:invoke",
+                            "ResultPath": null,
+                            "Parameters": {
+                                "FunctionName": "${lambda_EVR}",
+                                "Payload.$": "$"
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "Lambda.ServiceException",
+                                        "Lambda.AWSLambdaException",
+                                        "Lambda.SdkClientException",
+                                        "Lambda.TooManyRequestsException"
+                                    ],
+                                    "IntervalSeconds": 1,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                    "JitterStrategy": "FULL"
+                                }
+                            ],
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "EvCIDB2_EVR",
+                    "States": {
+                        "EvCIDB2_EVR": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::lambda:invoke",
+                            "ResultPath": null,
+                            "Parameters": {
+                                "FunctionName": "${EvCIDB2_EVR}",
+                                "Payload.$": "$"
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "Lambda.ServiceException",
+                                        "Lambda.AWSLambdaException",
+                                        "Lambda.SdkClientException",
+                                        "Lambda.TooManyRequestsException"
+                                    ],
+                                    "IntervalSeconds": 1,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                    "JitterStrategy": "FULL"
+                                }
+                            ],
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "Lambda_Rebalance",
+                    "States": {
+                        "Lambda_Rebalance": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::lambda:invoke",
+                            "ResultPath": "$.rebalanceResult",
+                            "Parameters": {
+                                "FunctionName": "${lambda_Rebalance}",
+                                "Payload.$": "$"
+                            },
+                            "Retry": [
+                                {
+                                    "ErrorEquals": [
+                                        "Lambda.ServiceException",
+                                        "Lambda.AWSLambdaException",
+                                        "Lambda.SdkClientException",
+                                        "Lambda.TooManyRequestsException"
+                                    ],
+                                    "IntervalSeconds": 1,
+                                    "MaxAttempts": 3,
+                                    "BackoffRate": 2,
+                                    "JitterStrategy": "FULL"
+                                }
+                            ],
+                            "Next": "Map"
+                        },
+                        "Map": {
+                            "Type": "Map",
+                            "ItemProcessor": {
+                                "ProcessorConfig": {
+                                    "Mode": "DISTRIBUTED",
+                                    "ExecutionType": "STANDARD"
+                                },
+                                "StartAt": "EvCIDB2_IAM_Policy",
+                                "States": {
+                                    "EvCIDB2_IAM_Policy": {
+                                        "Type": "Task",
+                                        "Resource": "arn:aws:states:::lambda:invoke",
+                                        "ResultPath": null,
+                                        "Parameters": {
+                                            "FunctionName": "${EvCIDB2_IAM_Policy}",
+                                            "Payload.$": "$.Value"
+                                        },
+                                        "Retry": [
+                                            {
+                                                "ErrorEquals": [
+                                                    "Lambda.ServiceException",
+                                                    "Lambda.AWSLambdaException",
+                                                    "Lambda.SdkClientException",
+                                                    "Lambda.TooManyRequestsException"
+                                                ],
+                                                "IntervalSeconds": 1,
+                                                "MaxAttempts": 3,
+                                                "BackoffRate": 2,
+                                                "JitterStrategy": "FULL"
+                                            }
+                                        ],
+                                        "End": true
+                                    }
+                                }
+                            },
+                            "End": true,
+                            "MaxConcurrency": 10,
+                            "Label": "Map",
+                            "ItemReader": {
+                                "Resource": "arn:aws:states:::s3:getObject",
+                                "ReaderConfig": {
+                                    "InputType": "JSON",
+                                    "MaxItems": 10
+                                },
+                                "Parameters": {
+                                    "Bucket.$": "$.rebalanceResult.Payload.bucket",
+                                    "Key.$": "$.rebalanceResult.Payload.s3_key"
+                                }
+                            },
+                            "ResultSelector": {},
+                            "ResultPath" : null
+                        }
+                    }
                 }
             ],
             "Next": "Lambda_Merge"
@@ -70,10 +266,12 @@
         "Lambda_Merge": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
-            "Output": "{% $states.result.Payload %}",
-            "Arguments": {
+            "ResultPath": null,
+            "Parameters": {
                 "FunctionName": "${lambda_merge}",
-                "Payload": "{% $states.input %}"
+                "Payload": {
+                    "Status": "All tasks completed"
+                }
             },
             "Retry": [
                 {

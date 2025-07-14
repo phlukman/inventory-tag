@@ -50,6 +50,53 @@ resource "aws_iam_policy" "state_machine_log_delivery_policy" {
 EOF
 }
 
+
+data "aws_iam_policy_document" "state_machine_s3_policy_document" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "s3:ListBucket"
+    ]
+    resources = [
+      var.s3_bucket_arn
+    ]
+  }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "s3:GetObject"
+    ]
+    resources = [
+      "${var.s3_bucket_arn}/*"
+    ]
+  }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt"
+    ]
+    resources = [
+      "*"
+    ]
+  }
+  statement {
+    effect = "Allow"
+    actions = [
+      "states:StartExecution"
+    ]
+    resources = [
+      aws_sfn_state_machine.cidb2_step_functions.arn
+    ]
+  }
+}
+
+resource "aws_iam_policy" "state_machine_s3_policy" {
+  name        = "${var.short_env}-cidb2-state-machine-s3-policy"
+  description = "Policy to allow Step Function to read S3 files"
+  policy      = data.aws_iam_policy_document.state_machine_s3_policy_document.json
+}
 resource "aws_iam_role" "step_function_role" {
   name               = "${var.short_env}-step-function-role"
   assume_role_policy = data.aws_iam_policy_document.step_function_assume_role_policy.json
@@ -58,6 +105,11 @@ resource "aws_iam_role" "step_function_role" {
 resource "aws_iam_role_policy_attachment" "state_machine_log_delivery_policy_attachment" {
   role       = aws_iam_role.step_function_role.name
   policy_arn = aws_iam_policy.state_machine_log_delivery_policy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "state_machine_s3_policy_attachment" {
+  role       = aws_iam_role.step_function_role.name
+  policy_arn = aws_iam_policy.state_machine_s3_policy.arn
 }
 
 #------------------------------------------------------------
@@ -89,11 +141,10 @@ data "aws_iam_policy_document" "step_function_invoke_lambda_policy_document" {
       "lambda:InvokeFunction"
     ]
 
-    resources = [
-      module.lambda_collector["IAM"].lambda_function_arn,
-      module.lambda_collector["KMS"].lambda_function_arn,
-      module.lambda_merge.lambda_function_arn
-    ]
+    resources = concat(
+      [module.lambda_merge.lambda_function_arn],
+      [for service in keys(var.service_by_category) : module.lambda_collector[service].lambda_function_arn]
+    )
   }
 }
 
@@ -207,7 +258,14 @@ resource "aws_iam_role_policy" "ami_lambda_exec_role_policy" {
     Statement = [
       {
         # Added s3:DeleteObject permission for S3 locking mechanism
-        Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:DeleteObject", "s3:ListBucketVersions", "s3:GetObjectVersion"],
+        Action = ["s3:PutObject",
+          "s3:GetObject",
+          "s3:ListBucket",
+          "s3:DeleteObject",
+          "s3:ListBucketVersions",
+          "s3:GetObjectVersion",
+          "s3:DeleteObjectVersion"
+        ],
         Effect   = "Allow",
         Resource = [var.s3_bucket_arn, "${var.s3_bucket_arn}/*"]
       },
@@ -311,9 +369,13 @@ data "aws_iam_policy_document" "allow_lambda_remote_account_access" {
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
-    resources = [
-      "arn:aws:iam::053210025230:role/cidb-inventory-role"
-    ]
+    # TODO: Allow dynamic account configuration
+    #  Changed var.member_accounts_ids for local.member_accounts_ids for testing purposes
+    resources = concat(
+      ["arn:aws:iam::267821145838:role/EVCIDB-Crossaccount-Role"],
+      [for account in local.member_account_ids : "arn:aws:iam::${account}:role/${local.app_role}"]
+    )
+
   }
 }
 

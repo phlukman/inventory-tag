@@ -9,19 +9,23 @@ from functools import wraps
 from botocore.exceptions import ClientError
 from logs import logger
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 # Error codes that should trigger circuit breaker
-CIRCUIT_BREAKER_ERRORS = frozenset([
-    "ThrottlingException",
-    "RequestThrottled",
-    "TooManyRequestsException",
-    "ServiceUnavailable",
-    "InternalError",
-    "ConnectionError",
-    "EndpointConnectionError",
-])
+CIRCUIT_BREAKER_ERRORS = frozenset(
+    [
+        "ThrottlingException",
+        "RequestThrottled",
+        "TooManyRequestsException",
+        "ServiceUnavailable",
+        "InternalError",
+        "ConnectionError",
+        "EndpointConnectionError",
+    ]
+)
 
 
 def extract_error_code(error):
@@ -53,8 +57,17 @@ class CircuitBreaker:
     OPEN = "OPEN"
     HALF_OPEN = "HALF-OPEN"
 
-    __slots__ = ('name', 'failure_threshold', 'recovery_timeout', 'reset_timeout',
-                'state', 'failure_count', 'last_failure_time', 'last_success_time', '_lock')
+    __slots__ = (
+        "name",
+        "failure_threshold",
+        "recovery_timeout",
+        "reset_timeout",
+        "state",
+        "failure_count",
+        "last_failure_time",
+        "last_success_time",
+        "_lock",
+    )
 
     def __init__(
         self, name, failure_threshold=5, recovery_timeout=30, reset_timeout=60
@@ -93,7 +106,8 @@ class CircuitBreaker:
                 self.failure_count = 0
                 logger.debug(
                     "Circuit '%s': Reset failure count after %ss with no failures",
-                    self.name, self.reset_timeout
+                    self.name,
+                    self.reset_timeout,
                 )
 
             # If circuit is open, check if recovery_timeout has elapsed
@@ -157,12 +171,14 @@ class CircuitBreaker:
                 ):
                     logger.warning(
                         "Circuit %s: Threshold reached (%d failures), opening circuit",
-                        self.name, self.failure_count
+                        self.name,
+                        self.failure_count,
                     )
                     self.state = self.OPEN
                 elif self.state == self.HALF_OPEN:
                     logger.warning(
-                        "Circuit %s: Failed in HALF-OPEN state, reopening circuit", self.name
+                        "Circuit %s: Failed in HALF-OPEN state, reopening circuit",
+                        self.name,
                     )
                     self.state = self.OPEN
 
@@ -179,8 +195,7 @@ class CircuitBreaker:
             self.failure_count = 0
             self.last_failure_time = 0
             self.last_success_time = time.time()
-            logger.info("Circuit %s: Manually reset to %s",
-                self.name, self.state)
+            logger.info("Circuit %s: Manually reset to %s", self.name, self.state)
             return self.state
 
 
@@ -193,7 +208,7 @@ class CircuitBreakerDecorator:
         fallback_function (callable, optional): Function to call when circuit is open
     """
 
-    __slots__ = ('circuit_breaker', 'fallback_function')
+    __slots__ = ("circuit_breaker", "fallback_function")
 
     def __init__(self, circuit_breaker, fallback_function=None):
         self.circuit_breaker = circuit_breaker
@@ -225,4 +240,5 @@ class CircuitBreakerDecorator:
 
 class CircuitBreakerOpenError(Exception):
     """Exception raised when a circuit breaker is open"""
+
     pass
